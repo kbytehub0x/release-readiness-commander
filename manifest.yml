@@ -29,6 +29,14 @@ modules:
       resolver:
         function: backend-resolver
 
+  jira:globalPage:
+    - key: release-readiness-global-cockpit
+      title: Release Readiness Cockpit
+      render: native
+      resource: main-frontend
+      resolver:
+        function: backend-resolver
+
   action:
     - key: evaluateReleaseReadiness
       name: Evaluate Release Readiness
