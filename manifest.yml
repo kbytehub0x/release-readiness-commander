@@ -1,0 +1,106 @@
+modules:
+  rovo:agent:
+    - key: release-readiness-commander-agent
+      name: Release Readiness Commander
+      description: An AI Release Gate that evaluates whether a software release is safe to ship by analyzing Jira blockers, dependencies, and security clearance.
+      prompt: >
+        You are the Release Readiness Commander, an expert AI Release Gate engineer.
+        Your goal is to help software engineering teams determine whether a release is safe to deploy to production.
+
+        When asked if a release is ready to ship:
+        1. Always invoke the `evaluateReleaseReadiness` action to calculate the deterministic readiness score and inspect gate findings.
+        2. If the user asks about security or leaked credentials, invoke `scanReleaseSecurity`.
+        3. Explain the decision clearly using the evidence: score, unresolved blockers, dependencies, and security status.
+        4. Provide an actionable recommendation: GO (ship with confidence), CONDITIONAL GO (review required), or NO-GO (block deployment).
+      conversationStarters:
+        - Is release v2.4.0-RC1 ready to ship?
+        - Scan release tickets for security and credential leaks
+        - What blockers are holding up the next release?
+      actions:
+        - evaluateReleaseReadiness
+        - scanReleaseSecurity
+        - hello-world-logger
+
+  jira:projectPage:
+    - key: release-readiness-cockpit
+      title: Release Readiness Cockpit
+      render: native
+      resource: main-frontend
+      resolver:
+        function: backend-resolver
+
+  action:
+    - key: evaluateReleaseReadiness
+      name: Evaluate Release Readiness
+      function: evaluateReleaseFn
+      actionVerb: GET
+      description: Evaluates Jira release tickets, blockers, dependencies, and security clearance to compute a deterministic Go/No-Go score.
+      inputs:
+        releaseVersion:
+          title: Release Version
+          type: string
+          required: false
+          description: Target release version name (e.g. v2.4.0-RC1).
+        projectKey:
+          title: Project Key
+          type: string
+          required: false
+          description: Jira project key (e.g. ENG).
+
+    - key: scanReleaseSecurity
+      name: Scan Release Security Clearance
+      function: scanSecurityFn
+      actionVerb: GET
+      description: Scans release issue text and comments for exposed API keys, tokens, passwords, and sensitive customer PII.
+      inputs:
+        releaseVersion:
+          title: Release Version
+          type: string
+          required: false
+          description: Target release version name.
+        projectKey:
+          title: Project Key
+          type: string
+          required: false
+          description: Jira project key.
+
+    - key: hello-world-logger
+      name: Log a message
+      function: messageLogger
+      actionVerb: GET
+      description: Logs a verification message.
+      inputs:
+        message:
+          title: Message
+          type: string
+          required: true
+          description: The message to log.
+
+  function:
+    - key: backend-resolver
+      handler: index.handler
+    - key: evaluateReleaseFn
+      handler: index.evaluateReleaseReadiness
+    - key: scanSecurityFn
+      handler: index.scanReleaseSecurity
+    - key: messageLogger
+      handler: index.messageLogger
+
+resources:
+  - key: main-frontend
+    path: src/frontend/index.jsx
+
+permissions:
+  scopes:
+    - read:jira-work
+    - write:jira-work
+    - read:space:confluence
+    - read:page:confluence
+    - write:page:confluence
+
+app:
+  runtime:
+    name: nodejs24.x
+    memoryMB: 256
+    architecture: arm64
+  id: ari:cloud:ecosystem::app/5c1b3b3c-0be8-4cf1-a15b-9550459dc6d0
