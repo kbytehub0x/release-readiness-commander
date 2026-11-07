@@ -2,22 +2,25 @@ modules:
   rovo:agent:
     - key: release-readiness-commander-agent
       name: Release Readiness Commander
-      description: An AI Release Gate that evaluates whether a software release is safe to ship by analyzing Jira blockers, dependencies, and security clearance.
+      description: An AI Release Gate that evaluates whether a software release is safe to ship by analyzing Jira blockers, Teamwork Graph dependencies, and sensitive data clearance.
       prompt: >
-        You are the Release Readiness Commander, an expert AI Release Gate engineer.
-        Your goal is to help software engineering teams determine whether a release is safe to deploy to production.
+        You are the Release Readiness Commander, an expert AI Release Gate teammate.
+        Your goal is to help engineering leads and release managers determine whether a software release is safe to deploy to production.
 
         When asked if a release is ready to ship:
-        1. Always invoke the `evaluateReleaseReadiness` action to calculate the deterministic readiness score and inspect gate findings.
-        2. If the user asks about security or leaked credentials, invoke `scanReleaseSecurity`.
-        3. Explain the decision clearly using the evidence: score, unresolved blockers, dependencies, and security status.
-        4. Provide an actionable recommendation: GO (ship with confidence), CONDITIONAL GO (review required), or NO-GO (block deployment).
+        1. Invoke the `evaluateReleaseReadiness` skill to calculate the deterministic readiness score and inspect gate findings.
+        2. When asked why a release is blocked or to explain the score, invoke `explainScore` to provide the itemized deductions with owner and remediation steps.
+        3. If the user asks about security clearance, credentials, or PII, invoke `scanReleaseSecurity`.
+        4. Explain decisions using concrete evidence: rule IDs, ticket keys, owners, and recommended remediation actions.
+        5. Provide an actionable recommendation: GO (ready to deploy), CONDITIONAL GO (review required), or NO-GO (release blocked).
       conversationStarters:
         - Is release v2.4.0-RC1 ready to ship?
-        - Scan release tickets for security and credential leaks
-        - What blockers are holding up the next release?
+        - Why is this release No-Go? Explain the score
+        - Scan release tickets for sensitive data and credential leaks
+        - Show open Teamwork Graph dependencies holding up the release
       actions:
         - evaluateReleaseReadiness
+        - explainScore
         - scanReleaseSecurity
         - hello-world-logger
 
@@ -39,10 +42,10 @@ modules:
 
   action:
     - key: evaluateReleaseReadiness
-      name: Evaluate Release Readiness
+      name: Assess Release Readiness
       function: evaluateReleaseFn
       actionVerb: GET
-      description: Evaluates Jira release tickets, blockers, dependencies, and security clearance to compute a deterministic Go/No-Go score.
+      description: Evaluates Jira release tickets, blockers, dependencies, and security clearance to compute an evidence-backed Go/No-Go score.
       inputs:
         releaseVersion:
           title: Release Version
@@ -55,11 +58,28 @@ modules:
           required: false
           description: Jira project key (e.g. ENG).
 
+    - key: explainScore
+      name: Explain Readiness Score
+      function: explainScoreFn
+      actionVerb: GET
+      description: Returns an itemized, auditable breakdown of every point deduction, affected ticket, owner, and required remediation action.
+      inputs:
+        releaseVersion:
+          title: Release Version
+          type: string
+          required: false
+          description: Target release version name.
+        projectKey:
+          title: Project Key
+          type: string
+          required: false
+          description: Jira project key.
+
     - key: scanReleaseSecurity
-      name: Scan Release Security Clearance
+      name: Scan Security Clearance Gate
       function: scanSecurityFn
       actionVerb: GET
-      description: Scans release issue text and comments for exposed API keys, tokens, passwords, and sensitive customer PII.
+      description: Scans release issue text and comments for exposed credentials, API keys, tokens, and sensitive PII.
       inputs:
         releaseVersion:
           title: Release Version
@@ -89,6 +109,8 @@ modules:
       handler: index.handler
     - key: evaluateReleaseFn
       handler: index.evaluateReleaseReadiness
+    - key: explainScoreFn
+      handler: index.explainScore
     - key: scanSecurityFn
       handler: index.scanReleaseSecurity
     - key: messageLogger

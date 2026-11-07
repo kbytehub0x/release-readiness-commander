@@ -6,12 +6,11 @@
  * 
  * Where:
  * - B = Unresolved release blockers
- * - D = Unresolved cross-team dependencies
- * - S = Security gate findings (critical/review)
- * - Q = Open Sev-1/Sev-2 defects or missing QA approvals
+ * - D = Unresolved cross-team dependencies (Teamwork Graph linked)
+ * - S = Security Readiness Gate findings (Critical credentials / PII)
+ * - Q = Quality defects (Sev-1/2 defects, unverified tests, missing sign-offs)
  */
 
-// Configurable policy weights
 export const DEFAULT_WEIGHTS = {
   blocker: 15,          // Per open blocker ticket
   dependency: 12,       // Per unresolved cross-team link
@@ -22,16 +21,7 @@ export const DEFAULT_WEIGHTS = {
 };
 
 /**
- * Evaluates readiness signals and computes a deterministic score and recommendation.
- * 
- * @param {Object} signals
- * @param {Array} signals.blockers - Array of unresolved blocker issues [{key, summary, priority}]
- * @param {Array} signals.dependencies - Array of external dependency items [{key, target, status}]
- * @param {Object} signals.securityGate - Security scan output {status, findings: [{type, severity, sourceKey, snippet}]}
- * @param {Array} signals.severeDefects - Open Sev-1 or Sev-2 bugs [{key, summary, severity}]
- * @param {Object} signals.approvals - Sign-off flags {qaApproved: boolean, securityApproved: boolean}
- * @param {Object} [customWeights] - Optional custom weights
- * @returns {Object} Full explainable evaluation
+ * Evaluates readiness signals and computes an auditable score, breakdown, and remediation plan.
  */
 export function calculateReadiness(signals, customWeights = {}) {
   const weights = { ...DEFAULT_WEIGHTS, ...customWeights };
@@ -42,90 +32,130 @@ export function calculateReadiness(signals, customWeights = {}) {
   const severeDefects = signals.severeDefects || [];
   const approvals = signals.approvals || { qaApproved: true, securityApproved: true };
 
-  // Breakdown calculations
-  const blockerDeduction = blockers.length * weights.blocker;
-  const dependencyDeduction = dependencies.filter(d => d.status !== 'Done' && d.status !== 'Resolved').length * weights.dependency;
+  const auditDeductions = [];
 
-  let securityDeduction = 0;
-  const criticalSecurity = securityFindings.filter(f => f.severity === 'CRITICAL');
-  const reviewSecurity = securityFindings.filter(f => f.severity === 'REVIEW');
-  securityDeduction += criticalSecurity.length * weights.securityCritical;
-  securityDeduction += reviewSecurity.length * weights.securityReview;
+  // 1. Blocker Deductions (B)
+  for (const b of blockers) {
+    auditDeductions.push({
+      ruleId: 'RULE-BLK-01',
+      ruleName: 'Unresolved Release Blocker',
+      pointsDeducted: weights.blocker,
+      affectedKey: b.key,
+      summary: b.summary,
+      owner: b.assignee || 'Unassigned',
+      actionRequired: 'Resolve ticket or obtain documented waiver from release manager.',
+      evidence: `Priority: ${b.priority}`
+    });
+  }
 
-  const defectDeduction = severeDefects.length * weights.severityDefect;
+  // 2. Cross-Team Dependency Deductions (D - Teamwork Graph)
+  for (const d of dependencies) {
+    if (d.status !== 'Done' && d.status !== 'Resolved') {
+      auditDeductions.push({
+        ruleId: 'RULE-DEP-02',
+        ruleName: 'Pending Cross-Team Dependency',
+        pointsDeducted: weights.dependency,
+        affectedKey: d.key,
+        summary: d.target,
+        owner: d.owner || 'Core Services Team',
+        actionRequired: 'Coordinate with owning team to verify deployment completion.',
+        evidence: `Dependency Status: ${d.status} (Teamwork Graph linked)`
+      });
+    }
+  }
 
-  let approvalDeduction = 0;
-  if (!approvals.qaApproved) approvalDeduction += weights.missingApproval;
-  if (!approvals.securityApproved) approvalDeduction += weights.missingApproval;
+  // 3. Security Readiness Gate Deductions (S)
+  for (const f of securityFindings) {
+    const isCritical = f.severity === 'CRITICAL';
+    auditDeductions.push({
+      ruleId: isCritical ? 'RULE-SEC-01' : 'RULE-SEC-02',
+      ruleName: isCritical ? 'Critical Credential Exposure' : 'Sensitive Data / PII Review Required',
+      pointsDeducted: isCritical ? weights.securityCritical : weights.securityReview,
+      affectedKey: f.issueKey,
+      summary: f.type,
+      owner: 'Security & Dev Lead',
+      actionRequired: isCritical ? 'Rotate compromised secret immediately; purge plaintext from history.' : 'Review data classification and verify redaction.',
+      evidence: f.sampleRedacted
+    });
+  }
 
-  const totalDeductions = blockerDeduction + dependencyDeduction + securityDeduction + defectDeduction + approvalDeduction;
+  // 4. Quality & Defect Deductions (Q)
+  for (const def of severeDefects) {
+    auditDeductions.push({
+      ruleId: 'RULE-QAL-01',
+      ruleName: 'Unresolved High-Severity Defect',
+      pointsDeducted: weights.severityDefect,
+      affectedKey: def.key,
+      summary: def.summary,
+      owner: def.assignee || 'QA Team',
+      actionRequired: 'Fix defect and pass regression test suite.',
+      evidence: `Severity: ${def.priority}`
+    });
+  }
+
+  if (!approvals.qaApproved) {
+    auditDeductions.push({
+      ruleId: 'RULE-APV-01',
+      ruleName: 'Missing QA Lead Approval',
+      pointsDeducted: weights.missingApproval,
+      affectedKey: 'QA-SIGNOFF',
+      summary: 'Formal QA sign-off missing',
+      owner: 'QA Lead',
+      actionRequired: 'Complete test run verification and submit sign-off.',
+      evidence: 'QA approval status: Pending'
+    });
+  }
+
+  if (!approvals.securityApproved) {
+    auditDeductions.push({
+      ruleId: 'RULE-APV-02',
+      ruleName: 'Missing Security Sign-off',
+      pointsDeducted: weights.missingApproval,
+      affectedKey: 'SEC-SIGNOFF',
+      summary: 'Security Clearance Gate blocked',
+      owner: 'Security Lead',
+      actionRequired: 'Review flagged credentials and clear gate.',
+      evidence: 'Security clearance: Held'
+    });
+  }
+
+  // Compute Total Score
+  const totalDeductions = auditDeductions.reduce((sum, item) => sum + item.pointsDeducted, 0);
   const rawScore = 100 - totalDeductions;
   const finalScore = Math.max(0, Math.min(100, rawScore));
 
   // Determine Recommendation
-  // Hard gates: Any CRITICAL security finding or any Blocker forces NO-GO
+  const criticalSecCount = securityFindings.filter(f => f.severity === 'CRITICAL').length;
   let recommendation = 'GO';
   let recommendationLabel = 'Ready to Ship';
-  let recommendationVariant = 'success';
 
-  if (criticalSecurity.length > 0 || blockers.length > 0 || finalScore < 70) {
+  if (criticalSecCount > 0 || blockers.length > 0 || finalScore < 70) {
     recommendation = 'NO_GO';
-    recommendationLabel = 'Release Blocked';
-    recommendationVariant = 'error';
-  } else if (finalScore < 90 || reviewSecurity.length > 0 || !approvals.qaApproved || !approvals.securityApproved) {
+    recommendationLabel = 'Release Blocked (NO-GO)';
+  } else if (finalScore < 90 || securityFindings.length > 0 || !approvals.qaApproved || !approvals.securityApproved) {
     recommendation = 'CONDITIONAL_GO';
     recommendationLabel = 'Conditional Go (Review Required)';
-    recommendationVariant = 'warning';
   }
 
-  // Generate Human-Readable Explanations for the Rovo Agent & Cockpit
-  const reasons = [];
-
-  if (blockers.length > 0) {
-    reasons.push(`${blockers.length} unresolved release blocker(s): ${blockers.map(b => b.key).join(', ')}`);
-  }
-  if (dependencies.length > 0) {
-    const pendingDeps = dependencies.filter(d => d.status !== 'Done');
-    if (pendingDeps.length > 0) {
-      reasons.push(`${pendingDeps.length} open cross-team dependency link(s) pending resolution`);
-    }
-  }
-  if (criticalSecurity.length > 0) {
-    reasons.push(`SECURITY GATE BLOCKED: ${criticalSecurity.length} critical exposed secret(s) detected`);
-  } else if (reviewSecurity.length > 0) {
-    reasons.push(`Security Gate Notice: ${reviewSecurity.length} finding(s) require review (redacted in report)`);
-  }
-  if (severeDefects.length > 0) {
-    reasons.push(`${severeDefects.length} open Sev-1/Sev-2 defect(s) pending resolution`);
-  }
-  if (!approvals.qaApproved) {
-    reasons.push('Missing QA lead sign-off approval');
-  }
-  if (!approvals.securityApproved) {
-    reasons.push('Missing Security lead sign-off approval');
-  }
+  // Reasons list for concise summaries
+  const reasons = auditDeductions.map(d => `-${d.pointsDeducted} pts [${d.ruleId}]: ${d.affectedKey} (${d.ruleName}) -> ${d.actionRequired}`);
 
   if (reasons.length === 0) {
-    reasons.push('All readiness gates passed with zero unresolved blockers or security issues.');
+    reasons.push('All release gates cleared: 0 blockers, 0 dependencies pending, security clearance verified.');
   }
 
   return {
     score: finalScore,
+    rawScore,
+    totalDeductions,
     recommendation,
     recommendationLabel,
-    recommendationVariant,
-    breakdown: {
-      blockerDeduction,
-      dependencyDeduction,
-      securityDeduction,
-      defectDeduction,
-      approvalDeduction
-    },
+    auditDeductions,
     counts: {
       blockersCount: blockers.length,
       dependenciesCount: dependencies.length,
-      criticalSecurityCount: criticalSecurity.length,
-      reviewSecurityCount: reviewSecurity.length,
+      criticalSecurityCount: criticalSecCount,
+      reviewSecurityCount: securityFindings.filter(f => f.severity === 'REVIEW').length,
       severeDefectsCount: severeDefects.length
     },
     reasons,

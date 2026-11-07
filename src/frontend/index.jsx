@@ -27,16 +27,18 @@ import { invoke } from '@forge/bridge';
 const App = () => {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState(null);
+  const [scenario, setScenario] = useState('active'); // 'active' (NO-GO) or 'cleared' (GO)
   const [publishing, setPublishing] = useState(false);
   const [publishResult, setPublishResult] = useState(null);
 
-  const loadEvaluation = async () => {
+  const loadEvaluation = async (simScenario = scenario) => {
     setLoading(true);
     setPublishResult(null);
     try {
       const result = await invoke('getReleaseReadiness', {
         projectKey: 'ENG',
-        versionName: 'v2.4.0-RC1'
+        versionName: 'v2.4.0-RC1',
+        scenario: simScenario
       });
       setData(result);
     } catch (err) {
@@ -47,15 +49,22 @@ const App = () => {
   };
 
   useEffect(() => {
-    loadEvaluation();
-  }, []);
+    loadEvaluation(scenario);
+  }, [scenario]);
+
+  const toggleScenario = () => {
+    const nextScenario = scenario === 'active' ? 'cleared' : 'active';
+    setScenario(nextScenario);
+    loadEvaluation(nextScenario);
+  };
 
   const handlePublishReport = async () => {
     setPublishing(true);
     try {
       const res = await invoke('publishConfluenceReport', {
         releaseVersion: data?.releaseVersion || 'v2.4.0-RC1',
-        projectKey: data?.projectKey || 'ENG'
+        projectKey: data?.projectKey || 'ENG',
+        scenario
       });
       setPublishResult(res);
     } catch (err) {
@@ -70,35 +79,50 @@ const App = () => {
       <Box padding="space.300">
         <Inline space="space.100" alignBlock="center">
           <Spinner size="medium" />
-          <Text>Evaluating release readiness & scanning security gates...</Text>
+          <Text>Running Release Gate & Teamwork Graph dependency audit...</Text>
         </Inline>
       </Box>
     );
   }
 
-  const evalData = data?.evaluation || { score: 0, reasons: [] };
+  const evalData = data?.evaluation || { score: 0, reasons: [], auditDeductions: [] };
   const secGate = data?.securityGate || { status: 'CLEAR', findings: [] };
   const issues = data?.issues || [];
+  const deductions = evalData.auditDeductions || [];
 
-  // Table configuration for Blockers
-  const blockerRows = issues.filter(i => i.isBlocker).map(b => ({
-    key: b.key,
+  // Table 1: Itemized Auditable Deductions
+  const deductionRows = deductions.map((d, idx) => ({
+    key: `ded-${idx}`,
     cells: [
-      { key: 'key', content: <Strong>{b.key}</Strong> },
-      { key: 'summary', content: <Text>{b.summary}</Text> },
-      { key: 'priority', content: <Lozenge appearance="removed">{b.priority}</Lozenge> },
-      { key: 'assignee', content: <Text>{b.assignee}</Text> }
+      { key: 'rule', content: <Lozenge appearance="removed">-{d.pointsDeducted} pts</Lozenge> },
+      { key: 'target', content: <Strong>{d.affectedKey}</Strong> },
+      { key: 'ruleName', content: <Text>{d.ruleName}</Text> },
+      { key: 'owner', content: <Text>{d.owner}</Text> },
+      { key: 'action', content: <Text>{d.actionRequired}</Text> }
     ]
   }));
 
-  // Table configuration for Security Findings
+  // Table 2: Teamwork Graph Dependencies
+  const dependencies = issues.filter(i => i.isDependency || i.summary.toLowerCase().includes('dependency'));
+  const dependencyRows = dependencies.map((dep, idx) => ({
+    key: `dep-${idx}`,
+    cells: [
+      { key: 'key', content: <Strong>{dep.key}</Strong> },
+      { key: 'target', content: <Text>{dep.summary}</Text> },
+      { key: 'status', content: <Lozenge appearance={dep.dependencyStatus === 'Done' ? 'success' : 'inprogress'}>{dep.dependencyStatus || 'In Progress'}</Lozenge> },
+      { key: 'owner', content: <Text>{dep.assignee || 'Core Services Team'}</Text> },
+      { key: 'graph', content: <Badge appearance="primary">Teamwork Graph</Badge> }
+    ]
+  }));
+
+  // Table 3: Security Clearance Gate
   const securityRows = (secGate.findings || []).map((f, idx) => ({
     key: `sec-${idx}`,
     cells: [
       { key: 'issue', content: <Strong>{f.issueKey}</Strong> },
       { key: 'type', content: <Text>{f.type}</Text> },
       { key: 'severity', content: <Lozenge appearance={f.severity === 'CRITICAL' ? 'removed' : 'inprogress'}>{f.severity}</Lozenge> },
-      { key: 'status', content: <Text>{f.sampleRedacted}</Text> }
+      { key: 'evidence', content: <Text>{f.sampleRedacted}</Text> }
     ]
   }));
 
@@ -110,15 +134,21 @@ const App = () => {
           <Stack space="space.050">
             <Inline space="space.100" alignBlock="center">
               <Heading as="h1">Release Readiness Commander</Heading>
-              <Badge appearance="primary">AI Gate</Badge>
+              <Badge appearance="primary">AI Release Gate</Badge>
+              <Tag text="Teamwork Graph Connected" />
             </Inline>
             <Text>Target Release: <Strong>{data?.releaseVersion}</Strong> | Project: <Strong>{data?.projectKey}</Strong></Text>
           </Stack>
 
           <ButtonGroup>
-            <Button appearance="subtle" onClick={loadEvaluation}>Re-scan Gate</Button>
+            <Button
+              appearance={scenario === 'active' ? 'warning' : 'subtle'}
+              onClick={toggleScenario}
+            >
+              {scenario === 'active' ? 'Simulate: Resolve Blockers (Go)' : 'Simulate: Pre-Release (No-Go)'}
+            </Button>
             <Button appearance="primary" onClick={handlePublishReport} isLoading={publishing}>
-              Publish Confluence Brief
+              Publish Confluence Sign-off Brief
             </Button>
           </ButtonGroup>
         </Inline>
@@ -126,18 +156,21 @@ const App = () => {
         {publishResult && (
           <SectionMessage
             appearance={publishResult.success ? 'success' : 'error'}
-            title={publishResult.success ? 'Confluence Release Brief Published' : 'Publishing Error'}
+            title={publishResult.success ? 'Confluence Release Brief Created' : 'Publishing Error'}
           >
             <Text>{publishResult.message}</Text>
           </SectionMessage>
         )}
 
-        {/* Score & Gate Recommendation Card */}
+        {/* Score & Gate Decision Card */}
         <Box padding="space.200" backgroundColor="elevation.surface.raised">
           <Inline spread="space-between" alignBlock="center">
             <Stack space="space.050">
-              <Text>Readiness Score</Text>
-              <Heading as="h1">{evalData.score} / 100</Heading>
+              <Text>Readiness Score (Deterministic)</Text>
+              <Inline space="space.100" alignBlock="baseline">
+                <Heading as="h1">{evalData.score} / 100</Heading>
+                <Text>({evalData.reasons.length} active policy signals)</Text>
+              </Inline>
               <ProgressBar value={evalData.score / 100} />
             </Stack>
 
@@ -159,7 +192,7 @@ const App = () => {
           </Inline>
         </Box>
 
-        {/* Active Gate Reasons */}
+        {/* Active Policy Deductions */}
         <SectionMessage
           appearance={evalData.recommendation === 'GO' ? 'success' : evalData.recommendation === 'CONDITIONAL_GO' ? 'warning' : 'error'}
           title="Gate Evaluation Rationale"
@@ -169,70 +202,77 @@ const App = () => {
           ))}
         </SectionMessage>
 
-        {/* Tabs for Details */}
+        {/* Navigation Tabs */}
         <Tabs id="readiness-tabs">
           <TabList>
-            <Tab>Unresolved Blockers ({blockerRows.length})</Tab>
-            <Tab>Security Clearance ({securityRows.length})</Tab>
-            <Tab>Score Breakdown</Tab>
+            <Tab>Auditable Deductions ({deductionRows.length})</Tab>
+            <Tab>Teamwork Graph Dependencies ({dependencyRows.length})</Tab>
+            <Tab>Security Readiness Gate ({securityRows.length})</Tab>
           </TabList>
 
-          {/* Blockers Tab */}
+          {/* Tab 1: Itemized Deductions */}
           <TabPanel>
             <Box padding="space.100">
-              {blockerRows.length > 0 ? (
+              {deductionRows.length > 0 ? (
                 <DynamicTable
                   head={{
                     cells: [
-                      { key: 'key', content: 'Issue Key' },
-                      { key: 'summary', content: 'Summary' },
-                      { key: 'priority', content: 'Priority' },
-                      { key: 'assignee', content: 'Owner' }
+                      { key: 'rule', content: 'Penalty' },
+                      { key: 'target', content: 'Source Key' },
+                      { key: 'ruleName', content: 'Policy Rule' },
+                      { key: 'owner', content: 'Owner' },
+                      { key: 'action', content: 'Remediation Action' }
                     ]
                   }}
-                  rows={blockerRows}
+                  rows={deductionRows}
                 />
               ) : (
-                <Text>No active blockers for this release version.</Text>
+                <Text>Zero policy deductions. All release readiness criteria satisfied.</Text>
               )}
             </Box>
           </TabPanel>
 
-          {/* Security Gate Tab */}
+          {/* Tab 2: Teamwork Graph Dependencies */}
           <TabPanel>
             <Box padding="space.100">
               <Stack space="space.100">
-                <Text><Em>Zero-Trust Policy: Flagged secrets are never modified in Jira; they are sanitized exclusively in published Confluence briefs.</Em></Text>
+                <Text><Em>Mapped across cross-team Jira tickets and services via Atlassian Teamwork Graph.</Em></Text>
+                <DynamicTable
+                  head={{
+                    cells: [
+                      { key: 'key', content: 'Dependency Ticket' },
+                      { key: 'target', content: 'Dependent Service / Capability' },
+                      { key: 'status', content: 'Status' },
+                      { key: 'owner', content: 'Owning Team' },
+                      { key: 'graph', content: 'Source' }
+                    ]
+                  }}
+                  rows={dependencyRows}
+                />
+              </Stack>
+            </Box>
+          </TabPanel>
+
+          {/* Tab 3: Security Clearance Gate */}
+          <TabPanel>
+            <Box padding="space.100">
+              <Stack space="space.100">
+                <Text><Em>Security Policy: Scans issue descriptions and comments for credentials and PII. Original Jira data remains untouched; sanitization is applied only when compiling Confluence briefs.</Em></Text>
                 {securityRows.length > 0 ? (
                   <DynamicTable
                     head={{
                       cells: [
-                        { key: 'issue', content: 'Source Issue' },
-                        { key: 'type', content: 'Finding Type' },
-                        { key: 'severity', content: 'Severity' },
-                        { key: 'status', content: 'Verification Details' }
+                        { key: 'issue', content: 'Source Ticket' },
+                        { key: 'type', content: 'Credential / PII Type' },
+                        { key: 'severity', content: 'Clearance Level' },
+                        { key: 'evidence', content: 'Evidence' }
                       ]
                     }}
                     rows={securityRows}
                   />
                 ) : (
-                  <Text>Zero exposed secrets or sensitive PII detected.</Text>
+                  <Text>Zero exposed secrets or sensitive PII detected. Security clearance is CLEAR.</Text>
                 )}
-              </Stack>
-            </Box>
-          </TabPanel>
-
-          {/* Score Breakdown Tab */}
-          <TabPanel>
-            <Box padding="space.100">
-              <Stack space="space.100">
-                <Text>Deterministic Formula: <Strong>Score = 100 - (W_b * B) - (W_d * D) - (W_s * S) - (W_q * Q)</Strong></Text>
-                <TagGroup>
-                  <Tag text={`Blocker Penalty: -${evalData.breakdown?.blockerDeduction || 0} pts`} />
-                  <Tag text={`Dependency Penalty: -${evalData.breakdown?.dependencyDeduction || 0} pts`} />
-                  <Tag text={`Security Gate Penalty: -${evalData.breakdown?.securityDeduction || 0} pts`} />
-                  <Tag text={`Defect Penalty: -${evalData.breakdown?.defectDeduction || 0} pts`} />
-                </TagGroup>
               </Stack>
             </Box>
           </TabPanel>

@@ -1,14 +1,20 @@
 /**
- * Zero-Trust Security Clearance Gate
+ * Release Security Clearance Gate (Sensitive Data & Credential Gate)
  * 
  * Inspects issue text, comments, and release context for:
- * - Leaked Cloud API Keys (AWS, GCP, Azure, GitHub, OpenAI)
+ * - Exposed Cloud Credentials (AWS, GCP, Azure, GitHub, OpenAI)
  * - Private Keys & Certificates (RSA, PEM, SSH)
- * - Authentication Tokens (Bearer JWT, Basic auth credentials)
- * - Sensitive PII (Emails in dev tickets, IP addresses, SSN/Credit Card patterns)
+ * - Database Connection Strings with Passwords
+ * - Authentication Tokens (Bearer JWT, Basic auth)
+ * - Sensitive Customer PII (Emails in dev tickets, IPs)
  * 
- * Produces a clear gate status: CLEAR, REVIEW_REQUIRED, or BLOCKED.
- * Leaves Jira tickets untouched; redacts findings only in the generated Confluence Report.
+ * Clearance Statuses:
+ * - CLEAR: Zero exposed credentials detected.
+ * - REVIEW_REQUIRED: Potential PII or tokens requiring verification.
+ * - BLOCKED: Live-looking credentials or private keys detected.
+ * 
+ * Non-destructive policy: Jira tickets remain completely untouched.
+ * Redaction applies exclusively to generated audit reports in Confluence.
  */
 
 export const SECRET_PATTERNS = [
@@ -25,31 +31,31 @@ export const SECRET_PATTERNS = [
     mask: '[REDACTED_GITHUB_TOKEN]'
   },
   {
-    type: 'Generic Bearer / JWT Token',
+    type: 'Bearer / JWT Authentication Token',
     severity: 'REVIEW',
     regex: /bearer\s+ey[A-Za-z0-9_-]{10,}\.[A-Za-z0-9._-]{10,}/gi,
     mask: 'Bearer [REDACTED_JWT]'
   },
   {
-    type: 'Private Key Block',
+    type: 'Private Key Block (RSA/PEM)',
     severity: 'CRITICAL',
     regex: /-----BEGIN\s+(?:RSA|DSA|EC|OPENSSH|PGP)?\s*PRIVATE\s+KEY-----/gi,
     mask: '[REDACTED_PRIVATE_KEY_BLOCK]'
   },
   {
-    type: 'Database Connection String / Password',
+    type: 'Database Connection URI with Password',
     severity: 'CRITICAL',
     regex: /(?:postgres|mysql|mongodb|redis):\/\/[a-zA-Z0-9_]+:[^@\s/]+@[a-zA-Z0-9.-]+/gi,
     mask: '[REDACTED_DATABASE_CONNECTION_URI]'
   },
   {
-    type: 'Hardcoded API Secret / Password Assignment',
+    type: 'Hardcoded API Secret / Key Assignment',
     severity: 'REVIEW',
     regex: /(?:password|secret|api_key|apikey|client_secret)\s*[:=]\s*['"][^'"\s]{8,}['"]/gi,
     mask: '$1: [REDACTED_SECRET]'
   },
   {
-    type: 'Exposed Customer Email / PII',
+    type: 'Customer Email / Sensitive PII',
     severity: 'REVIEW',
     regex: /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g,
     mask: '[REDACTED_EMAIL]'
@@ -58,9 +64,6 @@ export const SECRET_PATTERNS = [
 
 /**
  * Scans a collection of Jira issues/comments for security leaks.
- * 
- * @param {Array<Object>} items - Array of { key: string, summary: string, description: string, comments: string[] }
- * @returns {Object} Security Gate summary with status: 'CLEAR' | 'REVIEW_REQUIRED' | 'BLOCKED'
  */
 export function scanSecurityGate(items = []) {
   const findings = [];
@@ -95,25 +98,21 @@ export function scanSecurityGate(items = []) {
   // Derive Gate Status
   let status = 'CLEAR';
   let statusMessage = 'All scanned release tickets are clear of detected secrets and PII.';
-  let badgeVariant = 'success';
 
   const criticalCount = findings.filter(f => f.severity === 'CRITICAL').length;
   const reviewCount = findings.filter(f => f.severity === 'REVIEW').length;
 
   if (criticalCount > 0) {
     status = 'BLOCKED';
-    statusMessage = `BLOCKED: ${criticalCount} critical exposed secret(s) found. Deployment must be held until rotated or verified.`;
-    badgeVariant = 'error';
+    statusMessage = `BLOCKED: ${criticalCount} live-looking credential(s) detected. Must be rotated or verified before shipping.`;
   } else if (reviewCount > 0) {
     status = 'REVIEW_REQUIRED';
-    statusMessage = `REVIEW REQUIRED: ${reviewCount} item(s) flagged for potential sensitive data.`;
-    badgeVariant = 'warning';
+    statusMessage = `REVIEW REQUIRED: ${reviewCount} sensitive item(s) flagged for data clearance review.`;
   }
 
   return {
     status,
     statusMessage,
-    badgeVariant,
     criticalCount,
     reviewCount,
     totalFindings: findings.length,
@@ -124,10 +123,6 @@ export function scanSecurityGate(items = []) {
 
 /**
  * Sanitizes input text by replacing detected secrets and PII with redacting masks.
- * Used exclusively when creating Confluence reports so no sensitive credentials are published.
- * 
- * @param {string} text 
- * @returns {string} Sanitized text
  */
 export function sanitizeForReport(text) {
   if (!text || typeof text !== 'string') return text;
