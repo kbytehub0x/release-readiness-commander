@@ -177,6 +177,36 @@ export async function scanReleaseSecurity(payload) {
 }
 
 /**
+ * Rovo Skill: getReleaseDependencies
+ * Invoked when asking Rovo: "Show open Teamwork Graph dependencies holding up the release"
+ */
+export async function getReleaseDependencies(payload) {
+  const version = payload.releaseVersion || 'v2.4.0-RC1';
+  const project = payload.projectKey || 'ENG';
+
+  const gateResult = await evaluateReleaseGate(project, version, 'active');
+  const deps = gateResult.evaluation.dependencies || [];
+  const openDeps = deps.filter(d => d.status !== 'Done' && d.status !== 'Resolved' && d.status !== 'Closed');
+
+  return {
+    releaseVersion: version,
+    totalDependencies: deps.length,
+    openDependenciesCount: openDeps.length,
+    status: openDeps.length > 0 ? 'BLOCKED_BY_DEPENDENCIES' : 'DEPENDENCIES_CLEARED',
+    dependencies: deps.map(d => ({
+      ticket: d.key,
+      targetService: d.target,
+      status: d.status,
+      owner: d.owner || 'Unassigned',
+      linkType: d.linkType || 'cross-service'
+    })),
+    summary: openDeps.length > 0
+      ? `Release ${version} has ${openDeps.length} open cross-service dependency holding up deployment: ${openDeps.map(o => o.target).join(', ')}.`
+      : `All Teamwork Graph dependencies for release ${version} are resolved and ready.`
+  };
+}
+
+/**
  * Verification Logger
  */
 export function messageLogger(payload) {

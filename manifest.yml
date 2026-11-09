@@ -22,6 +22,7 @@ modules:
         - evaluateReleaseReadiness
         - explainScore
         - scanReleaseSecurity
+        - getReleaseDependencies
         - hello-world-logger
 
   jira:projectPage:
@@ -92,6 +93,23 @@ modules:
           required: false
           description: Jira project key.
 
+    - key: getReleaseDependencies
+      name: Inspect Teamwork Graph Dependencies
+      function: getDependenciesFn
+      actionVerb: GET
+      description: Analyzes cross-project issue links and upstream/downstream service dependency chains holding up the release.
+      inputs:
+        releaseVersion:
+          title: Release Version
+          type: string
+          required: false
+          description: Target release version name.
+        projectKey:
+          title: Project Key
+          type: string
+          required: false
+          description: Jira project key.
+
     - key: hello-world-logger
       name: Log a message
       function: messageLogger
@@ -113,6 +131,8 @@ modules:
       handler: index.explainScore
     - key: scanSecurityFn
       handler: index.scanReleaseSecurity
+    - key: getDependenciesFn
+      handler: index.getReleaseDependencies
     - key: messageLogger
       handler: index.messageLogger
 

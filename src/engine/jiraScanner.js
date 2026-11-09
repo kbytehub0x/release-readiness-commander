@@ -125,6 +125,25 @@ export async function evaluateReleaseGate(projectKey = 'ENG', versionName = 'v2.
           const priority = (iss.fields.priority && iss.fields.priority.name) || 'Medium';
           const isBlocker = priority === 'Highest' || priority === 'Blocker';
 
+          // Extract real Teamwork Graph cross-issue links
+          const links = [];
+          if (iss.fields.issuelinks && Array.isArray(iss.fields.issuelinks)) {
+            for (const l of iss.fields.issuelinks) {
+              const linked = l.outwardIssue || l.inwardIssue;
+              if (linked) {
+                links.push({
+                  type: (l.type && l.type.name) || 'relates',
+                  direction: l.outwardIssue ? 'outward' : 'inward',
+                  key: linked.key,
+                  summary: (linked.fields && linked.fields.summary) || '',
+                  status: (linked.fields && linked.fields.status && linked.fields.status.name) || 'In Progress'
+                });
+              }
+            }
+          }
+
+          const hasOpenDependency = links.some(l => l.status !== 'Done' && l.status !== 'Closed');
+
           return {
             key: iss.key,
             summary: iss.fields.summary || '',
@@ -132,7 +151,10 @@ export async function evaluateReleaseGate(projectKey = 'ENG', versionName = 'v2.
             isBlocker,
             assignee: (iss.fields.assignee && iss.fields.assignee.displayName) || 'Unassigned',
             description: descText,
-            comments
+            comments,
+            links,
+            isDependency: links.length > 0 || hasOpenDependency,
+            dependencyStatus: hasOpenDependency ? 'In Progress' : 'Done'
           };
         });
       }
@@ -151,12 +173,28 @@ export async function evaluateReleaseGate(projectKey = 'ENG', versionName = 'v2.
 
   // 2. Identify Blockers and Teamwork Graph Dependencies
   const blockers = issues.filter(i => i.isBlocker);
-  const dependencies = issues.filter(i => i.isDependency || i.summary.toLowerCase().includes('dependency')).map(d => ({
-    key: d.key,
-    target: d.summary,
-    status: d.dependencyStatus || 'In Progress',
-    owner: d.assignee
-  }));
+  const dependencies = [];
+  
+  issues.forEach(i => {
+    if (i.links && i.links.length > 0) {
+      i.links.forEach(l => {
+        dependencies.push({
+          key: `${i.key} ➔ ${l.key}`,
+          target: `${l.key}: ${l.summary || 'Linked Dependency'}`,
+          status: l.status,
+          owner: i.assignee,
+          linkType: l.type
+        });
+      });
+    } else if (i.isDependency || (i.summary && i.summary.toLowerCase().includes('dependency'))) {
+      dependencies.push({
+        key: i.key,
+        target: i.summary,
+        status: i.dependencyStatus || 'In Progress',
+        owner: i.assignee
+      });
+    }
+  });
   const severeDefects = issues.filter(i => (i.priority === 'Highest' || i.priority === 'High') && !i.isBlocker);
 
   // 3. Compute Deterministic Score & Explanations
