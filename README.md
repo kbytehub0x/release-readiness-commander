@@ -14,12 +14,29 @@
 
 **Release Readiness Commander** replaces stressful release meetings, subjective gut calls, and messy Slack threads with an intelligent, auditable **AI Release Gate**. 
 
-Operating natively within Jira and Confluence via **Atlassian Forge** and **Atlassian Rovo**, it continuously assesses software releases across three critical pillars:
+Operating natively within Jira and Confluence via **Atlassian Forge** and **Atlassian Rovo**, it **assesses on demand** software releases across three critical pillars:
 1. **Jira Release Context**: Unresolved blockers, Sev-1/Sev-2 defect spikes, and QA/approval tracking.
 2. **Teamwork Graph Dependencies**: Cross-project and cross-service dependency chains preventing deployment failure.
 3. **Security Clearance Gate**: Non-destructive scanning for hardcoded AWS keys, GitHub tokens, JWTs, private keys, database connection strings, and sensitive PII.
 
 Instead of an opaque black-box LLM number, Release Readiness Commander computes a **deterministic, auditable readiness score (0–100)** with itemized point deductions, linked evidence, responsible owners, and precise remediation actions.
+
+---
+
+## 🌐 Live Demo & Testing Environment
+
+For judges evaluating the live environment:
+
+| Property | Value / Reference |
+|---|---|
+| **Installed Atlassian Site** | `https://ghost-dev.atlassian.net` |
+| **Target Project** | Engineering Service (`ENG` / `DEMO`) |
+| **Demo Release Key** | `v2.4.0-RC1` |
+| **Rovo Agent Name** | `Release Readiness Commander` (`release-readiness-commander-agent`) |
+| **App ARI** | `ari:cloud:ecosystem::app/5c1b3b3c-0be8-4cf1-a15b-9550459dc6d0` |
+| **Jira Cockpit Location** | Jira Project Sidebar → **Release Readiness Cockpit** (or Top Nav **Apps** → **Release Readiness Cockpit**) |
+
+![Installed Cockpit in Jira](docs/images/jira-installed-cockpit.png)
 
 ---
 
@@ -69,10 +86,57 @@ Release Readiness Commander turns scattered context into an **evidence-backed re
 |                                             v                                                   |
 |                      +---------------------------------------------+                            |
 |                      |        CONFLUENCE SIGN-OFF BRIEF            |                            |
-|                      |  Sanitized Redaction + SHA-256 Verification |                            |
+|                      |  Sanitized Redaction + SHA-256 Fingerprint  |                            |
 |                      +---------------------------------------------+                            |
 +-------------------------------------------------------------------------------------------------+
 ```
+
+---
+
+## 🏗️ Architecture & Execution Flow
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User as Release Lead
+    participant Rovo as Atlassian Rovo Agent
+    participant Cockpit as Jira Native Cockpit (UI Kit)
+    participant Forge as Forge Backend Resolvers
+    participant JiraAPI as Jira REST API / Graph
+    participant ConfAPI as Confluence REST API
+
+    alt Conversational Inquiries via Rovo
+        User->>Rovo: "Is release v2.4.0-RC1 ready to ship?"
+        Rovo->>Forge: Invoke evaluateReleaseReadiness action
+        Forge->>JiraAPI: Query fixVersion, blockers, issue links
+        Forge-->>Rovo: Return deterministic score (8/100, NO-GO)
+        User->>Rovo: "Why is it No-Go? Explain the score"
+        Rovo->>Forge: Invoke explainScore action
+        Forge-->>Rovo: Itemized deductions (PAY-482, billing-service-v2, AWS key)
+    else Visual Cockpit in Jira
+        User->>Cockpit: Open Release Readiness Cockpit
+        Cockpit->>Forge: Request getReleaseReadiness(version)
+        Forge->>JiraAPI: Scan blockers, dependencies, secrets
+        Forge-->>Cockpit: Score, lozenge badge, auditable rule table
+        User->>Cockpit: Click "Publish Confluence Sign-off Brief"
+        Cockpit->>Forge: publishConfluenceReport(payload)
+        Forge->>ConfAPI: Create sanitized page with SHA-256 content fingerprint
+        ConfAPI-->>Cockpit: Page published confirmation & URL
+    end
+```
+
+### Component Boundaries
+1. **Forge Cloud Backend (Node.js 24 runtime)**:
+   - Runs deterministic scoring engine (`src/engine/scoring.js`).
+   - Runs sensitive data scanner (`src/engine/securityGate.js`).
+   - Generates Confluence storage format XHTML with SHA-256 integrity hash (`src/engine/confluenceReport.js`).
+2. **Jira REST API & Teamwork Graph**:
+   - Accessed securely via `@forge/api` using user context (`.asUser()`).
+   - Retrieves linked issue keys, issue types, resolution statuses, and dependency links.
+3. **Rovo Agent Actions (`rovo:agent`)**:
+   - Manifest-defined AI teammate executing three modular skills: `evaluateReleaseReadiness`, `explainScore`, and `scanReleaseSecurity`.
+4. **Native UI Kit Frontend (`@forge/react`)**:
+   - Server-rendered directly inside Jira project pages and global top-navigation.
 
 ---
 
@@ -143,7 +207,26 @@ Built with `@forge/react` UI Kit:
 One-click generation of an executive release audit report published directly into Confluence:
 * Automatically redacted sensitive data.
 * Structured sign-off checklist for Engineering Lead, QA Lead, and Security Lead.
-* **SHA-256 Audit Signature**: Every generated brief includes a tamper-evident hash `sha256:7f4a...` ensuring post-release integrity.
+* **SHA-256 Content-Integrity Fingerprint**: Every generated brief includes a tamper-resistant hash `sha256:7f4a...` ensuring post-release integrity.
+
+---
+
+## 🔒 Security & Privacy
+
+* **Least-Privilege Scopes**: The app only requests the minimum scopes required for Jira issue evaluation and Confluence page drafting (`read:jira-work`, `write:jira-work`, `read:space:confluence`, `read:page:confluence`, `write:page:confluence`).
+* **Runs 100% on Atlassian Cloud**: Fully hosted in Atlassian Forge's secure container sandbox. Customer code and ticket data never egress to third-party cloud servers or external databases.
+* **Zero Persistent Data Storage**: Assessments are performed ephemerally in-memory at evaluation time; no ticket data is cached or stored outside Atlassian.
+* **Read-Only Inspection**: The security clearance gate never deletes or modifies original Jira ticket descriptions or comments, eliminating the risk of data loss or corrupted tickets.
+* **Automated Redaction Policy**: All credentials, private tokens, and PII are masked in generated Confluence briefs before publishing.
+
+---
+
+## ⚠️ Limitations & Scope
+
+* **Dependency Graph Data**: While cross-project issue links are supported, deep multi-tier service dependency analysis utilizes simulated Teamwork Graph link relationships if upstream team projects do not have link permissions enabled.
+* **Scanner False Positives**: Pattern recognition may occasionally flag high-entropy mock tokens or test fixtures present in automated test tickets. These can be cleared via human waiver.
+* **Human-in-the-Loop Governance**: Release Readiness Commander is an advisory decision-support tool. It does not auto-deploy code or replace designated engineering leads; final sign-off is always human-controlled.
+* **No Automatic Credential Revocation**: Discovered secrets are flagged and masked in reports, but the app does not automatically revoke keys against third-party providers (e.g., AWS IAM) to avoid unintentional production outages.
 
 ---
 
@@ -166,6 +249,8 @@ release-readiness-commander/
 ├── package.json                # Dependencies (@forge/react, @forge/api, @forge/resolver)
 ├── LICENSE                     # MIT License (kbytehub0x)
 ├── README.md                   # Complete documentation and architecture guide
+├── docs/
+│   └── images/                 # Architecture diagrams and UI screenshots
 └── src/
     ├── index.js                # Forge backend resolvers & Rovo action handlers
     ├── frontend/
@@ -225,7 +310,7 @@ Select your Jira Cloud site (e.g., `<your-site>.atlassian.net`) and authorize th
    * Watch the score jump to **95/100 (READY TO SHIP)** with a green Lozenge.
 5. **Publish to Confluence**:
    * Click **"Publish Confluence Sign-off Brief"**.
-   * Open Confluence to inspect the newly published page containing sanitized findings, an approval matrix, and the SHA-256 tamper-evident integrity hash.
+   * Open Confluence to inspect the newly published page containing sanitized findings, an approval matrix, and the SHA-256 content-integrity fingerprint.
 
 ---
 
