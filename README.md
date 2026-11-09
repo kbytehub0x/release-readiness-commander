@@ -36,7 +36,7 @@ For judges evaluating the live environment:
 | **App ARI** | `ari:cloud:ecosystem::app/5c1b3b3c-0be8-4cf1-a15b-9550459dc6d0` |
 | **Jira Cockpit Location** | Jira Project Sidebar → **Release Readiness Cockpit** (or Top Nav **Apps** → **Release Readiness Cockpit**) |
 
-![Installed Cockpit in Jira](docs/images/jira-installed-cockpit.png)
+![Release Readiness Cockpit - Live Jira Installation](docs/images/cockpit-live-view.png)
 
 ---
 
@@ -200,6 +200,8 @@ Built with `@forge/react` UI Kit:
 * **Teamwork Graph Tab**: Visual list of cross-service blocker relationships and upstream teams.
 * **Security Clearance Tab**: Real-time summary of credential scans and PII findings.
 * **1-Click Simulation Toggle**: Instant toggle between active blocked state and cleared ready-to-ship state for live demos.
+
+![Release Readiness Cockpit UI Breakdown](docs/images/cockpit-live-view.png)
 
 ---
 
